@@ -627,7 +627,10 @@ func getAllTerragruntFiles(path string) ([]string, error) {
 				}
 
 				if fileInfo.IsDir() {
-					fullPath := filepath.Join(p, "terragrunt.hcl")
+					// Normalise to forward slashes so the key matches the
+					// config paths below on Windows (filepath.Join yields
+					// backslashes there, breaking the map lookup).
+					fullPath := filepath.ToSlash(filepath.Join(p, "terragrunt.hcl"))
 					filterExcludePathsMap[fullPath] = true
 				}
 			}
@@ -638,7 +641,7 @@ func getAllTerragruntFiles(path string) ([]string, error) {
 			return nil, err
 		}
 		for _, p := range paths {
-			_, exclude := filterExcludePathsMap[p]
+			_, exclude := filterExcludePathsMap[filepath.ToSlash(p)]
 
 			// if path not yet seen and is not in filter-exclude flag, insert once
 			if !uniqueConfigFilePaths[p] && !exclude {
