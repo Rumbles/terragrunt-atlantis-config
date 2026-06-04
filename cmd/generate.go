@@ -25,55 +25,28 @@ import (
 	"sync"
 )
 
-// Cache for environment variables to avoid repeated os.Environ() calls
-var (
-	envCache map[string]string
-	envOnce  sync.Once
-)
-
-// Cache for makePathAbsolute results
-var pathAbsoluteCache sync.Map
-
-// Parse env vars into a map with caching
+// Parse env vars into a map
 func getEnvs() map[string]string {
-	envOnce.Do(func() {
-		envs := os.Environ()
-		envCache = make(map[string]string, len(envs))
-		for _, env := range envs {
-			// Use IndexByte for better performance than SplitN
-			if idx := strings.IndexByte(env, '='); idx > 0 {
-				envCache[env[:idx]] = env[idx+1:]
-			}
-		}
-	})
-	return envCache
+	envs := os.Environ()
+	m := make(map[string]string)
+
+	for _, env := range envs {
+		results := strings.SplitN(env, "=", 2)
+		m[results[0]] = results[1]
+	}
+
+	return m
 }
 
 // Terragrunt imports can be relative or absolute
-// This makes relative paths absolute with caching
+// This makes relative paths absolute
 func makePathAbsolute(path string, parentPath string) string {
 	if strings.HasPrefix(path, filepath.ToSlash(gitRoot)) {
 		return path
 	}
 
-	// Create cache key
-	cacheKey := path + "|" + parentPath
-
-	// Check cache first
-	if cached, ok := pathAbsoluteCache.Load(cacheKey); ok {
-		return cached.(string)
-	}
-
-	// Compute result
 	parentDir := filepath.Dir(parentPath)
-	result := filepath.Join(parentDir, path)
-
-	// Cache result (only cache if not too long to avoid memory bloat)
-	if len(cacheKey) < 512 {
-		pathAbsoluteCache.Store(cacheKey, result)
-	}
-
-	return result
+	return filepath.Join(parentDir, path)
 }
 
 var requestGroup singleflight.Group
@@ -108,35 +81,16 @@ func (m *GetDependenciesCache) get(k string) (getDependenciesOutput, bool) {
 
 var getDependenciesCache = newGetDependenciesCache()
 
-// cleanupCaches clears all global caches for graceful shutdown
-func cleanupCaches() {
-	// Clear environment cache
-	envOnce = sync.Once{}
-	envCache = nil
-
-	// Clear path cache
-	pathAbsoluteCache = sync.Map{}
-
-	// Clear dependencies cache
-	getDependenciesCache = newGetDependenciesCache()
-}
-
 func uniqueStrings(str []string) []string {
-	if len(str) == 0 {
-		return str
-	}
-
-	seen := make(map[string]bool)
-	result := []string{}
-
+	keys := make(map[string]bool)
+	list := []string{}
 	for _, entry := range str {
-		if !seen[entry] {
-			seen[entry] = true
-			result = append(result, entry)
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
 		}
 	}
-
-	return result
+	return list
 }
 
 func lookupProjectHcl(m map[string][]string, value string) (key string) {
@@ -153,31 +107,18 @@ func lookupProjectHcl(m map[string][]string, value string) (key string) {
 
 // sliceUnion takes two slices of strings and produces a union of them, containing only unique values
 func sliceUnion(a, b []string) []string {
-	if len(b) == 0 {
-		return a
-	}
-	if len(a) == 0 {
-		return b
-	}
+	m := make(map[string]bool)
 
-	seen := make(map[string]bool)
-	result := make([]string, len(a))
-	copy(result, a)
-
-	// Mark all items from a as seen
 	for _, item := range a {
-		seen[item] = true
+		m[item] = true
 	}
 
-	// Add unique items from b
 	for _, item := range b {
-		if !seen[item] {
-			seen[item] = true
-			result = append(result, item)
+		if _, ok := m[item]; !ok {
+			a = append(a, item)
 		}
 	}
-
-	return result
+	return a
 }
 
 // Parses the terragrunt config at `path` to find all modules it depends on
@@ -201,7 +142,7 @@ func getDependencies(ctx *config.ParsingContext, path string) ([]string, error) 
 			return nil, nil
 		}
 
-		dependencies := make([]string, 0, 8) // Pre-allocate with small capacity
+		dependencies := []string{}
 		if len(includes) > 0 {
 			for _, includeDep := range includes {
 				getDependenciesCache.set(includeDep.Path, getDependenciesOutput{nil, err})
@@ -300,7 +241,7 @@ func getDependencies(ctx *config.ParsingContext, path string) ([]string, error) 
 		}
 
 		// Filter out and dependencies that are the empty string
-		nonEmptyDeps := make([]string, 0, len(dependencies))
+		nonEmptyDeps := []string{}
 		for _, dep := range dependencies {
 			if dep != "" {
 				childDepAbsPath := dep
@@ -313,7 +254,7 @@ func getDependencies(ctx *config.ParsingContext, path string) ([]string, error) 
 		}
 
 		// Recurse to find dependencies of all dependencies
-		cascadedDeps := make([]string, 0, len(nonEmptyDeps)*2) // Estimate double capacity for cascaded deps
+		cascadedDeps := []string{}
 		for _, dep := range nonEmptyDeps {
 			cascadedDeps = append(cascadedDeps, dep)
 
@@ -416,11 +357,11 @@ func createProject(ctx context.Context, sourcePath string) (*AtlantisProject, er
 		return nil, nil
 	}
 
-	// Pre-allocate slice with estimated capacity (2 built-in + dependencies)
-	estimatedCapacity := 2 + len(dependencies)
-	relativeDependencies := make([]string, 2, estimatedCapacity)
-	relativeDependencies[0] = "*.hcl"
-	relativeDependencies[1] = "*.tf*"
+	// All dependencies depend on their own .hcl file, and any tf files in their directory
+	relativeDependencies := []string{
+		"*.hcl",
+		"*.tf*",
+	}
 
 	// Add other dependencies based on their relative paths. We always want to output with Unix path separators
 	for _, dependencyPath := range dependencies {
@@ -793,9 +734,6 @@ func getAllTerragruntProjectHclFiles() map[string][]string {
 }
 
 func main(cmd *cobra.Command, args []string) error {
-	// Setup cleanup on exit for graceful shutdown
-	defer cleanupCaches()
-
 	// Ensure the gitRoot has a trailing slash and is an absolute path
 	absoluteGitRoot, err := filepath.Abs(gitRoot)
 	if err != nil {
@@ -837,24 +775,11 @@ func main(cmd *cobra.Command, args []string) error {
 	}
 
 	lock := sync.Mutex{}
-
-	// Use global app context for graceful shutdown
-	ctx := appContext
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
+	ctx := context.Background()
 	errGroup, _ := errgroup.WithContext(ctx)
 	sem := semaphore.NewWeighted(numExecutors)
 
 	for _, workingDir := range workingDirs {
-		// Check if context was cancelled (e.g., by SIGTERM/SIGINT)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		terragruntFiles, err := getAllTerragruntFiles(workingDir)
 		if err != nil {
 			return err
@@ -863,13 +788,6 @@ func main(cmd *cobra.Command, args []string) error {
 		if len(projectHclDirs) == 0 || createHclProjectChilds || (createHclProjectExternalChilds && workingDir == gitRoot) {
 			// Concurrently looking all dependencies
 			for _, terragruntPath := range terragruntFiles {
-				// Check if context was cancelled
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
 				terragruntPath := terragruntPath // https://golang.org/doc/faq#closures_and_goroutines
 
 				// don't create atlantis projects already covered by project hcl file projects
@@ -936,10 +854,6 @@ func main(cmd *cobra.Command, args []string) error {
 			}
 
 			if err := errGroup.Wait(); err != nil {
-				// If context was cancelled, prioritize that error for cleaner shutdown message
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
 				return err
 			}
 		}
@@ -971,10 +885,6 @@ func main(cmd *cobra.Command, args []string) error {
 			})
 
 			if err := errGroup.Wait(); err != nil {
-				// If context was cancelled, prioritize that error for cleaner shutdown message
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
 				return err
 			}
 		}
