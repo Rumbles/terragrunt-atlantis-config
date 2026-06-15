@@ -9,6 +9,10 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+    # 7-day soak: don't propose a release until it's been out a week. Security
+    # updates bypass the cooldown.
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -23,6 +27,10 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+    # 7-day soak: don't propose a release until it's been out a week. Security
+    # updates bypass the cooldown.
+    cooldown:
+      default-days: 7
     groups:
       go-modules:
         patterns: ["*"]
