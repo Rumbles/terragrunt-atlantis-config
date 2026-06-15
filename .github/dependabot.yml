@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # GitHub Actions are SHA-pinned (with version comments) in the workflows;
+  # Dependabot bumps the pinned SHA + comment, keeping the pinning and picking
+  # up security fixes.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Go modules. NOTE: gruntwork-io/terragrunt is the parsing library this
+  # fork's generate fix is built on (TerragruntConfigFromPartialConfig /
+  # SkipOutput / decode-list behaviour). Review any terragrunt bump carefully
+  # — a minor bump previously changed the parsing API (0.54 -> 0.72).
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      go-modules:
+        patterns: ["*"]
