@@ -566,6 +566,22 @@ projects:
     when_modified:
     - '*.hcl'
     - '*.tf*'
+    - ../../terragrunt.hcl
+    - ../../_modules/widget/*.tf*
+  dir: when_modified_exclude/example/dev
+- autoplan:
+    enabled: false
+    when_modified:
+    - '*.hcl'
+    - '*.tf*'
+    - ../../terragrunt.hcl
+    - ../../_modules/widget/*.tf*
+  dir: when_modified_exclude/example/uat
+- autoplan:
+    enabled: false
+    when_modified:
+    - '*.hcl'
+    - '*.tf*'
     - ../terragrunt.hcl
     - ../common/terragrunt.hcl
     - ../dependency/terragrunt.hcl
